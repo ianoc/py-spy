@@ -10,10 +10,10 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        os: [ubuntu-20.04]
+        os: [ubuntu-24.04]
         platform: [x86_64]
         include:
-          - os: ubuntu-20.04
+          - os: ubuntu-24.04
             platform: x86_64
     steps:
       - uses: actions/checkout@v2
