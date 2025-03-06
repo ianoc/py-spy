@@ -34,7 +34,7 @@ APP_DIR="target/release/"
 
 if [[ "$TARGET_OS" =~ ubuntu.* ]]; then
     TARGET_OS=linux
-    sudo apt install -y musl-tools
+    sudo apt install -y musl-tools linux-musl-dev libunwind-dev 
     rustup target add x86_64-unknown-linux-musl
     CROSS_BUILD_TARGET="--target=x86_64-unknown-linux-musl"
     APP_DIR="target/x86_64-unknown-linux-musl/release/"
@@ -43,7 +43,7 @@ fi
 
 for b in "$@"; do
     set -x
-    cargo build $CROSS_BUILD_TARGET --bin $b --release --all-features
+    cargo build $CROSS_BUILD_TARGET --bin $b --release --features unwind
 
     OUTPUT_ASSET_NAME="${b}-$TARGET_OS-${TARGET_PLATFORM}"
     cp $APP_DIR/$b $OUTPUT_ASSET_NAME
