@@ -41,6 +41,8 @@ if [[ "$TARGET_OS" =~ ubuntu.* ]]; then
 fi
 
 
+ls -R /usr/local/musl/ | grep libunwind
+
 for b in "$@"; do
     set -x
     cargo build $CROSS_BUILD_TARGET --bin $b --release --features unwind
