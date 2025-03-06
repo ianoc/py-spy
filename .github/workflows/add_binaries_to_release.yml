@@ -20,6 +20,7 @@ jobs:
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
+      - run: sudo apt install libunwind-dev
       - run: rustup component add rustfmt
       - name: Build and upload artifact
         run: ./.github/workflows/build_binaries.sh ${{ matrix.os }} ${{ matrix.platform }} py-spy
