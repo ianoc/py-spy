@@ -22,6 +22,7 @@ jobs:
         CARGO_HOME: /root/.cargo
     steps:
       - uses: actions/checkout@v2
+      - uses: dev-hanz-ops/install-gh-cli-action@v0.2.1
       - run: rustup component add rustfmt
       - name: Build and upload artifact
         run: ./.github/workflows/build_binaries.sh ${{ matrix.os }} ${{ matrix.platform }} py-spy
