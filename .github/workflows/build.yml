@@ -102,6 +102,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - uses: Swatinem/rust-cache@v2
+      - uses: dev-hanz-ops/install-gh-cli-action@v0.2.1
       - name: Build
         run: |
           python3 -m pip install --upgrade maturin
