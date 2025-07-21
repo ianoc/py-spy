@@ -30,7 +30,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-rust-binaries-arm:
+  rust-binaries-arm:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: true
