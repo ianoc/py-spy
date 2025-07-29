@@ -101,8 +101,11 @@ where
 
         ret.push(trace);
         // This seems to happen occasionally when scanning BSS addresses for valid interpreters
-        if ret.len() > 4096 {
-            return Err(format_err!("Max thread recursion depth reached"));
+        if ret.len() > 65536 {
+            return Err(format_err!(
+                "Max thread recursion depth reached: {}",
+                ret.len()
+            ));
         }
         threads = thread.next();
     }

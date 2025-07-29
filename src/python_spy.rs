@@ -385,7 +385,7 @@ impl PythonSpy {
             traces.push(trace);
 
             // This seems to happen occasionally when scanning BSS addresses for valid interpreters
-            if traces.len() > 4096 {
+            if traces.len() > 65536 {
                 return Err(format_err!("Max thread recursion depth reached"));
             }
 
