@@ -15,6 +15,9 @@ pub fn copy_string<T: StringObject, P: ProcessMemory>(
     process: &P,
 ) -> Result<String, Error> {
     let obj = process.copy_pointer(ptr)?;
+    if obj.size() == 0 {
+        return Ok(String::new());
+    }
     if obj.size() >= 4096 {
         return Err(format_err!(
             "Refusing to copy {} chars of a string",
@@ -69,7 +72,7 @@ pub fn copy_long<P: ProcessMemory>(
     let (size, negative, digit, value_size) = match version {
         Version {
             major: 3,
-            minor: 12..=13,
+            minor: 12..=14,
             ..
         } => {
             // PyLongObject format changed in python 3.12
@@ -139,7 +142,6 @@ pub fn copy_int<P: ProcessMemory>(process: &P, addr: usize) -> Result<i64, Error
 }
 
 /// Allows iteration of a python dictionary. Only supports python 3.6+ right now
-
 pub struct DictIterator<'a, P: 'a> {
     process: &'a P,
     entries_addr: usize,
@@ -225,7 +227,7 @@ impl<'a, P: ProcessMemory> DictIterator<'a, P> {
         match version {
             Version {
                 major: 3,
-                minor: 11..=13,
+                minor: 11..=14,
                 ..
             } => {
                 let dict: crate::python_bindings::v3_11_0::PyDictObject =
@@ -383,7 +385,7 @@ where
         if value_type_name == "bool" {
             (if value > 0 { "True" } else { "False" }).to_owned()
         } else {
-            format!("{}", value)
+            format!("{value}")
         }
     };
 
@@ -409,10 +411,10 @@ where
         let value = copy_string(addr as *const I::StringObject, process)?
             .replace('\'', "\\\"")
             .replace('\n', "\\n");
-        if value.len() as isize >= max_length - 5 {
-            format!("\"{}...\"", &value[..(max_length - 5) as usize])
+        if let Some((offset, _)) = value.char_indices().nth((max_length - 5) as usize) {
+            format!("\"{}...\"", &value[..offset])
         } else {
-            format!("\"{}\"", value)
+            format!("\"{value}\"")
         }
     } else if flags & PY_TPFLAGS_DICT_SUBCLASS != 0 {
         if version.major == 3 && version.minor >= 6 {
@@ -427,7 +429,7 @@ where
                     values.push("...".to_owned());
                     break;
                 }
-                values.push(format!("{}: {}", key, value));
+                values.push(format!("{key}: {value}"));
             }
             format!("{{{}}}", values.join(", "))
         } else {
@@ -472,11 +474,51 @@ where
         format!("{}", value.ob_fval)
     } else if value_type_name == "NoneType" {
         "None".to_owned()
+    } else if value_type_name.starts_with("numpy.") {
+        match value_type_name {
+            "numpy.bool" => format_obval::<bool, P>(addr, process)?,
+            "numpy.uint8" => format_obval::<u8, P>(addr, process)?,
+            "numpy.uint16" => format_obval::<u16, P>(addr, process)?,
+            "numpy.uint32" => format_obval::<u32, P>(addr, process)?,
+            "numpy.uint64" => format_obval::<u64, P>(addr, process)?,
+            "numpy.int8" => format_obval::<i8, P>(addr, process)?,
+            "numpy.int16" => format_obval::<i16, P>(addr, process)?,
+            "numpy.int32" => format_obval::<i32, P>(addr, process)?,
+            "numpy.int64" => format_obval::<i64, P>(addr, process)?,
+            "numpy.float32" => format_obval::<f32, P>(addr, process)?,
+            "numpy.float64" => format_obval::<f64, P>(addr, process)?,
+            _ => format!("<{value_type_name} at 0x{addr:x}>"),
+        }
     } else {
-        format!("<{} at 0x{:x}>", value_type_name, addr)
+        format!("<{value_type_name} at 0x{addr:x}>")
     };
 
     Ok(formatted)
+}
+
+/// Format the numpy scalar to a string.
+///
+/// All numpy scalars have shape:
+/// {
+///     ob_base: PyObject,
+///     obval: <value>,
+/// }
+///
+/// Where `obval` can be of different sizes depending on the scalar type.
+/// We match the size to the value_type_name for this purpose, avoiding the
+/// need to build bindings for the numpy C API.
+///
+/// * `addr`: Address of the numpy scalar
+/// * `process`: Process memory in which the object resides
+fn format_obval<T, P>(addr: usize, process: &P) -> Result<String, Error>
+where
+    T: std::fmt::Display + Copy,
+    P: ProcessMemory,
+{
+    let base_addr = addr as *mut u32;
+    let offset = std::mem::size_of::<crate::python_bindings::v3_7_0::PyObject>() as isize;
+    let result = unsafe { process.copy_pointer(base_addr.byte_offset(offset) as *const T)? };
+    Ok(format!("{result}"))
 }
 
 #[cfg(test)]

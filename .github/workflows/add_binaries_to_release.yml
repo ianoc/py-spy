@@ -4,6 +4,9 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: write
+
 jobs:
   rust-binaries:
     runs-on: ${{ matrix.os }}
@@ -21,7 +24,7 @@ jobs:
         RUSTUP_HOME: /root/.rustup
         CARGO_HOME: /root/.cargo
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v6
       - uses: dev-hanz-ops/install-gh-cli-action@v0.2.1
       - run: rustup component add rustfmt
       - run: git config --global --add safe.directory '*'
@@ -48,7 +51,7 @@ jobs:
         RUSTUP_HOME: /root/.rustup
         CARGO_HOME: /root/.cargo
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v6
       - uses: dev-hanz-ops/install-gh-cli-action@v0.2.1
       - run: rustup component add rustfmt
       - run: git config --global --add safe.directory '*'

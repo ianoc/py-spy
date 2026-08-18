@@ -1,11 +1,13 @@
+import argparse
 from collections import defaultdict
 import requests
 import pathlib
 import yaml
 import re
 
-
 _VERSIONS_URL = "https://raw.githubusercontent.com/actions/python-versions/main/versions-manifest.json"  # noqa
+
+_OSX_PYTHON_EXCLUSIONS = []
 
 
 def parse_version(v):
@@ -19,7 +21,13 @@ def get_github_python_versions():
     # get a map of version: platform/arch so we can exclude here
     platforms = {}
     for v in versions_json:
-        platforms[v["version"]] = set((f["platform"], f["arch"]) for f in v["files"])
+        version_platforms = set()
+        for f in v["files"]:
+            platform, arch = f["platform"], f["arch"]
+            if platform == "linux" and f.get("platform_version") != "22.04":
+                continue
+            version_platforms.add((platform, arch))
+        platforms[v["version"]] = version_platforms
 
     raw_versions = [v["version"] for v in versions_json]
     minor_versions = defaultdict(list)
@@ -44,10 +52,10 @@ def get_github_python_versions():
 
         # for older versions of python, don't test all patches
         # (just test first and last) to keep the test matrix down
-        if major == 2 or minor <= 11:
+        if major == 2 or minor <= 12:
             patches = [patches[0], patches[-1]]
 
-        if major == 3 and minor > 13:
+        if major == 3 and minor > 14:
             continue
 
         versions.extend(f"{major}.{minor}.{patch}" for patch in patches)
@@ -55,7 +63,7 @@ def get_github_python_versions():
     return versions, platforms
 
 
-def update_python_test_versions():
+def update_python_test_versions(force=False):
     versions, platforms = get_github_python_versions()
     versions = sorted(versions, key=parse_version)
 
@@ -63,10 +71,11 @@ def update_python_test_versions():
         pathlib.Path(__file__).parent.parent / ".github" / "workflows" / "build.yml"
     )
 
-    build_yml = yaml.safe_load(open(".github/workflows/build.yml"))
+    build_yml = yaml.safe_load(open(build_yml_path))
     test_matrix = build_yml["jobs"]["test-wheels"]["strategy"]["matrix"]
     existing_python_versions = test_matrix["python-version"]
-    if versions == existing_python_versions:
+    if not force and versions == existing_python_versions:
+        print("No new python versions found - not updating github actions")
         return
 
     print("Adding new versions")
@@ -90,13 +99,24 @@ def update_python_test_versions():
     # since it currently fails in GHA on SIP errors
     exclusions = []
     for v in versions:
-        # if we don't have a python version for osx/windows skip
-        if ("darwin", "x64") not in platforms[v] or v.startswith("3.12"):
-            exclusions.append("          - os: macos-13\n")
+        # if we don't have a python version for the platform, skip it in GHA
+        # also, ignore python 3.12.* on OSX
+        if ("darwin", "arm64") not in platforms[v] or any(
+            v.startswith(pattern) for pattern in _OSX_PYTHON_EXCLUSIONS
+        ):
+            exclusions.append("          - os: macos-latest\n")
             exclusions.append(f"            python-version: {v}\n")
 
-        if ("win32", "x64") not in platforms[v] or v.startswith("3.12"):
+        if ("win32", "x64") not in platforms[v]:
             exclusions.append("          - os: windows-latest\n")
+            exclusions.append(f"            python-version: {v}\n")
+
+        if ("linux", "x64") not in platforms[v]:
+            exclusions.append("          - os: ubuntu-22.04\n")
+            exclusions.append(f"            python-version: {v}\n")
+
+        if ("linux", "arm64") not in platforms[v]:
+            exclusions.append("          - os: ubuntu-22.04-arm\n")
             exclusions.append(f"            python-version: {v}\n")
 
     first_exclude_line = lines.index("        exclude:\n", first_line)
@@ -108,4 +128,15 @@ def update_python_test_versions():
 
 
 if __name__ == "__main__":
-    update_python_test_versions()
+    parser = argparse.ArgumentParser(
+        description="Updates github actions with new python versions",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--force",
+        help="Run script even if there are no new python versions",
+        action="store_true",
+    )
+    args = parser.parse_args()
+
+    update_python_test_versions(force=args.force)
