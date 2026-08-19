@@ -70,7 +70,7 @@ pub struct ProcessInfo {
 
 /// Given an InterpreterState, this function returns a vector of stack traces for each thread
 pub fn get_stack_traces<I, P>(
-    interpreter: &I,
+    interpreter_address: usize,
     process: &P,
     threadstate_address: usize,
     config: Option<&Config>,
@@ -79,14 +79,14 @@ where
     I: InterpreterState,
     P: ProcessMemory,
 {
-    let gil_thread_id = if interpreter.gil_locked().unwrap_or(true) {
-        get_gil_threadid::<I, P>(threadstate_address, process)?
-    } else {
-        0
-    };
+    let gil_thread_id = get_gil_threadid::<I, P>(threadstate_address, process)?;
+
+    let threadstate_ptr_ptr = I::threadstate_ptr_ptr(interpreter_address);
+    let mut threads: *const I::ThreadState = process
+        .copy_struct(threadstate_ptr_ptr as usize)
+        .context("Failed to copy PyThreadState head pointer")?;
 
     let mut ret = Vec::new();
-    let mut threads = interpreter.head();
 
     let lineno = config.map(|c| c.lineno).unwrap_or(LineNo::NoLine);
     let dump_locals = config.map(|c| c.dump_locals).unwrap_or(0);
@@ -153,7 +153,15 @@ where
             .context("Failed to copy PyCodeObject")?;
 
         let filename = copy_string(code.filename(), process).context("Failed to copy filename");
-        let name = copy_string(code.name(), process).context("Failed to copy function name");
+
+        // Try to get qualname first (available in Python 3.11+), fall back to name
+        let name = match code.qualname() {
+            Some(qualname_ptr) => {
+                copy_string(qualname_ptr, process).or_else(|_| copy_string(code.name(), process))
+            }
+            None => copy_string(code.name(), process),
+        }
+        .context("Failed to copy function name");
 
         // just skip processing the current frame if we can't load the filename or function name.
         // this can happen in python 3.13+ since the f_executable isn't guaranteed to be
@@ -172,7 +180,8 @@ where
         let name = name?;
 
         // skip <shim> entries in python 3.12+
-        if filename == "<shim>" {
+        // Unset file/function name in py3.13 means this is a shim.
+        if filename.is_empty() || filename == "<shim>" {
             frame_ptr = frame.back();
             set_last_frame_as_shim_entry(&mut frames);
             continue;
@@ -198,7 +207,10 @@ where
         };
 
         let locals = if copy_locals {
-            Some(get_locals(&code, frame_ptr, &frame, process)?)
+            Some(
+                get_locals(&code, frame_ptr, &frame, process)
+                    .context("Failed to get local variables")?,
+            )
         } else {
             None
         };
@@ -279,7 +291,9 @@ fn get_locals<C: CodeObject, F: FrameObject, P: ProcessMemory>(
 ) -> Result<Vec<LocalVariable>, Error> {
     let local_count = code.nlocals() as usize;
     let argcount = code.argcount() as usize;
-    let varnames = process.copy_pointer(code.varnames())?;
+    let varnames = process
+        .copy_pointer(code.varnames())
+        .context("Failed to get varnames from PyCodeObject")?;
 
     let ptr_size = std::mem::size_of::<*const i32>();
     let locals_addr = frameptr as usize + std::mem::size_of_val(frame) - ptr_size;
@@ -289,8 +303,13 @@ fn get_locals<C: CodeObject, F: FrameObject, P: ProcessMemory>(
     for i in 0..local_count {
         let nameptr: *const C::StringObject =
             process.copy_struct(varnames.address(code.varnames() as usize, i))?;
-        let name = copy_string(nameptr, process)?;
+
+        let name = copy_string(nameptr, process).context("Failed to copy local variable name")?;
         let addr: usize = process.copy_struct(locals_addr + i * ptr_size)?;
+
+        // hack: handle things like None, True, False, small integer constants etc on Python 3.14
+        let addr = if addr & 1 == 1 { addr - 1 } else { addr };
+
         if addr == 0 {
             continue;
         }
@@ -308,17 +327,34 @@ pub fn get_gil_threadid<I: InterpreterState, P: ProcessMemory>(
     threadstate_address: usize,
     process: &P,
 ) -> Result<u64, Error> {
-    // figure out what thread has the GIL by inspecting _PyThreadState_Current
-    if threadstate_address > 0 {
-        let addr: usize = process.copy_struct(threadstate_address)?;
-
-        // if the addr is 0, no thread is currently holding the GIL
-        if addr != 0 {
-            let threadstate: I::ThreadState = process.copy_struct(addr)?;
-            return Ok(threadstate.thread_id());
-        }
+    // happens during initialization when checking to see if we have a valid interpreter (before we've figured out the threadstate_address)
+    if threadstate_address == 0 {
+        return Ok(0);
     }
-    Ok(0)
+
+    let addr = if I::HAS_GIL_RUNTIME_STATE {
+        // get the gilruntimestate - note that this struct is identical between 3.12/3.13/3.14
+        let gil_state: crate::python_bindings::v3_13_0::_gil_runtime_state =
+            process.copy_struct(threadstate_address)?;
+        // check to see if the GIL is locked already
+        if gil_state.locked != 0 {
+            gil_state.last_holder as usize
+        } else {
+            0
+        }
+    } else {
+        process.copy_struct::<usize>(threadstate_address)?
+    };
+
+    // if the addr is 0, no thread is currently holding the GIL
+    let threadid = if addr != 0 {
+        let threadstate: I::ThreadState = process.copy_struct(addr)?;
+        threadstate.thread_id()
+    } else {
+        0
+    };
+
+    Ok(threadid)
 }
 
 impl ProcessInfo {

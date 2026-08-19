@@ -1,5 +1,5 @@
-use anyhow::Error;
-use std::collections::HashSet;
+use anyhow::{Context, Error};
+use std::collections::{HashMap, HashSet};
 use std::num::NonZeroUsize;
 
 use cpp_demangle::{BorrowedSymbol, DemangleOptions};
@@ -258,33 +258,37 @@ impl NativeStack {
     pub fn add_native_only_threads(
         &mut self,
         process: &remoteprocess::Process,
+        native_threads: &[remoteprocess::Thread],
+        thread_activity: &HashMap<Tid, bool>,
         traces: &mut Vec<StackTrace>,
     ) -> Result<(), Error> {
-        // Set of all threads we already processed
-        let seen_threads =
-            HashSet::<Tid>::from_iter(traces.iter().map(|t| t.os_thread_id.unwrap_or(0) as Tid));
+        let seen_threads: HashSet<Tid> = traces
+            .iter()
+            .filter_map(|trace| trace.os_thread_id)
+            .map(Tid::try_from)
+            .collect::<Result<_, _>>()?;
 
-        for native_thread in process.threads()?.into_iter() {
+        for native_thread in native_threads {
             let tid = native_thread.id()?;
 
             if seen_threads.contains(&tid) {
-                // We've already seen this thread, don't add it again
                 continue;
             }
 
-            // We are reusing the `merge_native_stack` method and just pass an
-            // empty python stack.
-            let native_stack = self.get_thread(&native_thread)?;
+            let native_stack = self.get_thread(native_thread)?;
             let python_stack = Vec::new();
             let symbolized_stack = self.merge_native_stack(&python_stack, native_stack)?;
+            let thread_id = u64::try_from(tid).context("Native thread ID cannot be represented")?;
+            let active = *thread_activity
+                .get(&tid)
+                .context("Missing native thread activity")?;
 
-            // Push new stack trace
             traces.push(StackTrace {
                 pid: process.pid,
-                thread_id: tid.try_into().unwrap_or(0),
+                thread_id,
                 thread_name: None,
-                os_thread_id: tid.try_into().ok(),
-                active: native_thread.active().unwrap_or(false),
+                os_thread_id: Some(thread_id),
+                active,
                 owns_gil: false,
                 frames: symbolized_stack,
                 process_info: None,
@@ -315,7 +319,7 @@ impl NativeStack {
                 if func.starts_with('_') {
                     if let Ok((sym, _)) = BorrowedSymbol::with_tail(func.as_bytes()) {
                         let options = DemangleOptions::new().no_params().no_return_type();
-                        if let Ok(sym) = sym.demangle(&options) {
+                        if let Ok(sym) = sym.demangle_with_options(&options) {
                             demangled = Some(sym);
                         }
                     }

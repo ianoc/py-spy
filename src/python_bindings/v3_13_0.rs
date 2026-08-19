@@ -340,7 +340,11 @@ pub struct _object {
 #[derive(Copy, Clone)]
 pub union _object__bindgen_ty_1 {
     pub ob_refcnt: Py_ssize_t,
+    // line manually added, see https://github.com/benfred/py-spy/issues/753
+    #[cfg(target_pointer_width = "64")]
     pub ob_refcnt_split: [u32; 2usize],
+    // line manually added, see https://github.com/benfred/py-spy/issues/753
+    #[cfg(target_pointer_width = "64")]
     _bindgen_union_align: u64,
 }
 impl Default for _object__bindgen_ty_1 {
@@ -905,7 +909,12 @@ impl Default for PyBaseExceptionObject {
         unsafe { ::std::mem::zeroed() }
     }
 }
+
+#[cfg(target_pointer_width = "64")]
 pub type digit = u32;
+#[cfg(target_pointer_width = "32")]
+pub type digit = u16;
+
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone)]
 pub struct _PyLongValue {

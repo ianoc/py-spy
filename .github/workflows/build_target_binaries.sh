@@ -17,10 +17,10 @@ APP_DIR="target/${RUST_TARGET}/release/"
 CROSS_BUILD_TARGET="--target=${RUST_TARGET}"
 rustup target add "${RUST_TARGET}"
 
-if [ "$RUST_TARGET" == "x86_64-unknown-linux-musl" ];then
-    UNWIND_ARG="--features unwind"
-else
+if [ "$RUST_TARGET" == "i686-unknown-linux-musl" ];then
     UNWIND_ARG=""
+else
+    UNWIND_ARG="--features unwind"
 fi
 
 for b in "$@"; do
