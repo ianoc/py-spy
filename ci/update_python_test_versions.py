@@ -7,9 +7,6 @@ import re
 
 _VERSIONS_URL = "https://raw.githubusercontent.com/actions/python-versions/main/versions-manifest.json"  # noqa
 
-_OSX_PYTHON_EXCLUSIONS = []
-
-
 def parse_version(v):
     return tuple(int(part) for part in re.split(r"\W", v)[:3])
 
@@ -17,8 +14,7 @@ def parse_version(v):
 def get_github_python_versions():
     versions_json = requests.get(_VERSIONS_URL).json()
 
-    # windows platform support isn't great for older versions of python
-    # get a map of version: platform/arch so we can exclude here
+    # Get a map of version: platform/arch so unsupported Linux builds can be excluded.
     platforms = {}
     for v in versions_json:
         version_platforms = set()
@@ -95,22 +91,8 @@ def update_python_test_versions(force=False):
     new_versions = [f"            {v},\n" for v in versions]
     lines = lines[: first_version_line + 1] + new_versions + lines[last_version_line:]
 
-    # also automatically exclude >= v3.11.* from running on OSX,
-    # since it currently fails in GHA on SIP errors
     exclusions = []
     for v in versions:
-        # if we don't have a python version for the platform, skip it in GHA
-        # also, ignore python 3.12.* on OSX
-        if ("darwin", "arm64") not in platforms[v] or any(
-            v.startswith(pattern) for pattern in _OSX_PYTHON_EXCLUSIONS
-        ):
-            exclusions.append("          - os: macos-latest\n")
-            exclusions.append(f"            python-version: {v}\n")
-
-        if ("win32", "x64") not in platforms[v]:
-            exclusions.append("          - os: windows-latest\n")
-            exclusions.append(f"            python-version: {v}\n")
-
         if ("linux", "x64") not in platforms[v]:
             exclusions.append("          - os: ubuntu-22.04\n")
             exclusions.append(f"            python-version: {v}\n")
